@@ -1,36 +1,30 @@
 from setuptools import find_packages, setup
 
-with open("enginecli/version.txt") as ifp:
-    VERSION = ifp.read().strip()
-
 long_description = ""
 with open("README.md") as ifp:
     long_description = ifp.read()
 
 setup(
-    name="enginecli",
-    version=VERSION,
+    name="primordial",
+    version="0.0.1",
     packages=find_packages(),
-    install_requires=["boto3", "eth-brownie", "tqdm", "tabulate"],
+    install_requires=["torch", "torchvision", "torchaudio"],
     extras_require={
-        "dev": ["black", "moonworm >= 0.3.0"],
-        "distribute": ["setuptools", "twine", "wheel"],
+        "dev": ["black", "isort"],
     },
-    description="Moonstream Engine CLI for blockchain operations",
+    description="primordial: Pre-launch simulations of Great Wyrm game economy",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    author="Moonstream",
-    author_email="engineering@moonstream.to",
+    author="zomglings",
+    author_email="neeraj@moonstream.to",
     classifiers=[
         "Development Status :: 3 - Alpha",
-        "Programming Language :: Python",
-        "License :: OSI Approved :: Apache Software License",
-        "Topic :: Software Development :: Libraries",
+        "License :: OSI Approved :: MIT License",
     ],
-    python_requires=">=3.6",
+    python_requires=">=3.10",
     entry_points={
         "console_scripts": [
-            "enginecli=enginecli.cli:main",
+            "primordial=primordial.cli:main",
         ]
     },
     include_package_data=True,
