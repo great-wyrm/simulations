@@ -4,4 +4,4 @@
 develop and invalidate the ideas in the
 [**Great Wyrm: World mode mechanics** design document](https://docs.google.com/document/d/1Qt8qQySghspPtIegsiqO_YHNhOBja6x-gG2casLng80/edit?usp=sharing).
 
-<center><img src="https://static.greatwyrm.xyz/research/GreatWyrmEconomy.png" width="40%" /></center>
+<p align="center"><img src="https://static.greatwyrm.xyz/research/GreatWyrmEconomy.png" width="40%" /></p>
