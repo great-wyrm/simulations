@@ -8,7 +8,7 @@ setup(
     name="primordial",
     version="0.0.1",
     packages=find_packages(),
-    install_requires=["torch", "torchvision", "torchaudio"],
+    install_requires=["numpy", "torch", "torchvision", "torchaudio"],
     extras_require={
         "dev": ["black", "isort"],
     },
