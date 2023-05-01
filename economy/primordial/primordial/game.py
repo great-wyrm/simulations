@@ -37,7 +37,6 @@ Each additional population created during a growth tick consumes a surplus procr
 if a nation has high fertility, if it does not stockpile enough procreative resources, it will fail to
 support any additional population in excess of its procreative resource stockpile.
 """
-import argparse
 from dataclasses import dataclass
 import json
 import random
@@ -46,8 +45,7 @@ from typing import cast, List, Optional, Tuple
 import numpy as np
 
 # Resource order: offensive, defensive, exploitative, procreative
-ResourceParameters = Tuple[float, float, float, float]
-ResourceAmounts = Tuple[int, int, int, int]
+ResourceAmounts = List[int]
 
 
 @dataclass
@@ -66,20 +64,17 @@ class Nation:
     # Current population of nation
     population: int
 
-    # Proportion of population that focuses on harvesting each resource
-    harvesters: ResourceAmounts
+    # Current stocks of each resource
+    stocks: ResourceAmounts
+
+    # Current bids for each resource in terms of each other resource
+    asks: List[ResourceAmounts]
 
     # Technology level determines efficiency as a logarithm of the technology level. Diminishing marginal
     # utility, but unbounded potential.
     # Cost to increase technology to level n is n exploitative resources. This makes the total cost of
     # getting to a given level of technology quadratic in the level. 1 + 2 + 3 + ... + n = n(n+1)/2.
     technology: int = 1
-
-    # Current stocks of each resource
-    stocks: ResourceAmounts
-
-    # Current bids for each resource in terms of each other resource
-    bids: Tuple[ResourceAmounts, ResourceAmounts, ResourceAmounts, ResourceAmounts]
 
 
 def generate_variants(
@@ -88,6 +83,7 @@ def generate_variants(
     num_variants: int,
     starting_population: int,
     starting_resources: int,
+    starting_technology: int,
     rng: Optional[np.random.Generator] = None,
 ) -> List[Nation]:
     """
@@ -115,21 +111,18 @@ def generate_variants(
             efficiency=efficiency,
             fertility=fertility,
             population=starting_population,
-            harvesters=(
-                int(starting_population / 4),
-                int(starting_population / 4),
-                int(starting_population / 4),
-                starting_population - 3 * int(starting_population / 4),
-            ),
-            stocks=(
+            stocks=[
                 int(starting_resources * aggression),
                 int(starting_resources * caution),
                 int(starting_resources * efficiency),
                 int(starting_resources * fertility),
-            ),
-            bids=((0, 0, 0, 0), (0, 0, 0, 0), (0, 0, 0, 0), (0, 0, 0, 0)),
+            ],
+            asks=[[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]],
+            technology=starting_technology,
         )
         nations.append(nation)
+
+    return nations
 
 
 def generate_nations(
@@ -137,6 +130,7 @@ def generate_nations(
     parameter_alphas: List[Tuple[float, float, float, float]],
     starting_populations: List[int],
     starting_resources: List[int],
+    starting_technologies: List[int],
     rng: Optional[np.random.Generator] = None,
 ) -> List[Nation]:
     assert len(mentality_alphas) == len(
@@ -158,10 +152,15 @@ def generate_nations(
             parameter_alpha,
             starting_population,
             starting_stockpile,
+            starting_technology,
             rng,
         )
-        for mentality_alpha, parameter_alpha, starting_population, starting_stockpile in zip(
-            mentality_alphas, parameter_alphas, starting_populations, starting_resources
+        for mentality_alpha, parameter_alpha, starting_population, starting_stockpile, starting_technology in zip(
+            mentality_alphas,
+            parameter_alphas,
+            starting_populations,
+            starting_resources,
+            starting_technologies,
         )
     ]
 
@@ -178,7 +177,6 @@ class GameSession:
         self,
         nations: List[Nation],
         population_growth_interval: int = 10,
-        rng: Optional[np.random.Generator] = None,
     ) -> None:
         """
         Initializes a game session with a list of nations and a population growth interval.
@@ -188,12 +186,8 @@ class GameSession:
         """
         self.nations: List[Nation] = nations
         self.population_growth_interval: int = population_growth_interval
-        self.tick: int = 0
+        self.last_tick: int = 0
         self.total_supply: ResourceAmounts = (0, 0, 0, 0)
-
-        if rng is None:
-            rng = np.random.default_rng()
-        self.rng = rng
 
         self.update()
 
@@ -204,7 +198,7 @@ class GameSession:
         national_stocks_by_resource = zip(*[nation.stocks for nation in self.nations])
         self.total_supply = cast(
             ResourceAmounts,
-            tuple([sum(stocks) for stocks in national_stocks_by_resource]),
+            [sum(stocks) for stocks in national_stocks_by_resource],
         )
 
     def update_bids(self) -> None:
@@ -229,21 +223,26 @@ class GameSession:
         of the nation's intrinsic price and the implied global price.
         """
         nation_parameters = [
-            nation.aggression,
-            nation.caution,
-            nation.efficiency,
-            nation.fertility,
+            [
+                nation.aggression,
+                nation.caution,
+                nation.efficiency,
+                nation.fertility,
+            ]
+            for nation in self.nations
         ]
         national_preference_prices = np.array(
             [
                 [
                     [
-                        0 if s == d else nation_parameters[d] / nation_parameters[s]
+                        0
+                        if s == d
+                        else nation_parameters[i][s] / nation_parameters[i][d]
                         for s in range(4)
                     ]
                     for d in range(4)
                 ]
-                for nation in self.nations
+                for i, nation in enumerate(self.nations)
             ]
         )
 
@@ -252,8 +251,8 @@ class GameSession:
                 [
                     [
                         0
-                        if nation.stocks[s] == 0
-                        else nation.stocks[d] / nation.stocks[s]
+                        if nation.stocks[d] == 0
+                        else nation.stocks[s] / nation.stocks[d]
                         for s in range(4)
                     ]
                     for d in range(4)
@@ -267,8 +266,8 @@ class GameSession:
                 [
                     [
                         0
-                        if self.total_supply[s] == 0
-                        else self.total_supply[d] / self.total_supply[s]
+                        if self.total_supply[d] == 0
+                        else self.total_supply[s] / self.total_supply[d]
                         for s in range(4)
                     ]
                     for d in range(4)
@@ -287,8 +286,8 @@ class GameSession:
             )
         )
 
-        for i, nation in self.nations:
-            nation.bids = tuple([tuple([vectorized_bids[i][d] for d in range(4)])])
+        for i, nation in enumerate(self.nations):
+            nation.asks = vectorized_bids[i]
 
     def update(self) -> None:
         """
@@ -311,8 +310,11 @@ class GameSession:
         defensive_strengths = [
             (i, nation.stocks[1])
             for i, nation in enumerate(self.nations)
-            if i != nation_index
+            if i != nation_index and nation.population > 0
         ]
+        if not defensive_strengths:
+            return None
+
         weakest_nation_index, weakest_nation_defensive_strength = min(
             defensive_strengths, key=lambda item: item[1]
         )
@@ -337,8 +339,11 @@ class GameSession:
         offensive_strengths = [
             (i, nation.stocks[0])
             for i, nation in enumerate(self.nations)
-            if i != nation_index
+            if i != nation_index and nation.population > 0
         ]
+        if not offensive_strengths:
+            return None
+
         strongest_nation_index, strongest_nation_offensive_strength = max(
             offensive_strengths, key=lambda item: item[1]
         )
@@ -382,9 +387,14 @@ class GameSession:
                 self.nations[defender_index].population -= self.nations[
                     attacker_index
                 ].stocks[0]
-                if self.nations[defender_index].population < 0:
+                if self.nations[defender_index].population <= 0:
                     self.nations[defender_index].population = 0
                     success = True
+                    for i in range(4):
+                        self.nations[attacker_index].stocks[i] += self.nations[
+                            defender_index
+                        ].stocks[i]
+                        self.nations[defender_index].stocks[i] = 0
             else:
                 self.nations[defender_index].stocks[3] -= excess
                 self.nations[attacker_index].stocks[0] = 0
@@ -399,6 +409,13 @@ class GameSession:
                     attacker_index
                 ].stocks[1]
                 self.nations[attacker_index].stocks[1] = 0
+                if self.nations[attacker_index].population <= 0:
+                    self.nations[attacker_index].population = 0
+                    for i in range(4):
+                        self.nations[defender_index].stocks[i] += self.nations[
+                            attacker_index
+                        ].stocks[i]
+                        self.nations[attacker_index].stocks[i] = 0
 
         return success
 
@@ -460,15 +477,21 @@ class GameSession:
 
         price_estimates = np.sqrt(np.multiply(global_prices, beliefs))
 
-        # Elements of the form (bidder_index, exchange_resource_index, exchange_amount, price, discount_from_estimate, resource_index)
-        favorable_bids: List[Tuple[int, int, int, float, float]] = []
+        # Elements of the form (asker_index, exchange_resource_index, exchange_amount, price, discount_from_estimate, resource_index)
+        favorable_asks: List[Tuple[int, int, int, float, float]] = []
 
         for resource_index, _ in resources_by_priority:
             for exchange_resource_index, _ in resources_by_priority[
                 resource_index + 1 :
             ]:
-                for nation_index, nation in self.nations:
+                if trader.stocks[exchange_resource_index] == 0:
+                    continue
+
+                for nation_index, nation in enumerate(self.nations):
                     if nation_index == trader_index:
+                        continue
+
+                    if nation.stocks[resource_index] == 0:
                         continue
 
                     nation_parameters = [
@@ -479,35 +502,42 @@ class GameSession:
                     ]
 
                     if (
-                        nation.bids[exchange_resource_index][resource_index]
+                        nation.asks[exchange_resource_index][resource_index]
                         >= price_estimates[exchange_resource_index][resource_index]
                     ):
                         nation_desired_proportion = (
-                            nation_parameters[exchange_resource_index]
-                            / nation_parameters[resource_index]
+                            nation_parameters[resource_index]
+                            / nation_parameters[exchange_resource_index]
                         )
 
                         # Solve for n:
-                        # (nation.stocks[exchange_resource_index] + n*bid) / (nation.stocks[resource_index] - n) = nation_desired_proportion
+                        # (nation.stocks[resource_index] - n) / (nation.stocks[exchange_resource_index] + n*nation.asks[resource_index][exchange_resource_index]) = nation_desired_proportion
                         max_amount = int(
                             (
-                                nation_desired_proportion
-                                * nation.stocks[resource_index]
-                                - nation.stocks[exchange_resource_index]
+                                nation.stocks[resource_index]
+                                - nation_desired_proportion
+                                * nation.stocks[exchange_resource_index]
                             )
                             / (
-                                nation_desired_proportion
-                                + nation.bids[exchange_resource_index][resource_index]
+                                1
+                                + (
+                                    nation.asks[resource_index][exchange_resource_index]
+                                    * nation_desired_proportion
+                                )
                             )
                         )
+                        if max_amount < 0:
+                            # This means that the nation does not have a surplus of the resource at resource_index.
+                            continue
+                        max_amount = min(max_amount, nation.stocks[resource_index])
 
-                        favorable_bids.append(
+                        favorable_asks.append(
                             (
                                 nation_index,
                                 exchange_resource_index,
                                 max_amount,
-                                nation.bids[exchange_resource_index][resource_index],
-                                nation.bids[exchange_resource_index][resource_index]
+                                nation.asks[exchange_resource_index][resource_index],
+                                nation.asks[exchange_resource_index][resource_index]
                                 / price_estimates[exchange_resource_index][
                                     resource_index
                                 ],
@@ -515,47 +545,56 @@ class GameSession:
                             )
                         )
 
-        if not favorable_bids:
+        if not favorable_asks:
             return False
 
+        # Elements of the form (asker_index, exchange_resource_index, exchange_amount, price, discount_from_estimate, resource_index)
         # Favorability of trade depends on how much trader favors hoarding or trade.
         # Sort available bids of desired resource by favorability.
-        favorable_bids.sort(
+        favorable_asks.sort(
             key=lambda item: trader.hoarder
             * (trader.stocks[item[1]] + item[2])
-            / trader.stocks[item[1]]
+            / (sum(trader.stocks) + 1)
             + trader.trader * item[4],
             reverse=True,
         )
 
         (
-            bidder_index,
+            asker_index,
             trade_exchange_resource_index,
             max_trade_amount,
             price,
             _,
             trade_resource_index,
-        ) = favorable_bids[0]
+        ) = favorable_asks[0]
 
-        bidder = self.nations[bidder_index]
+        asker = self.nations[asker_index]
 
         max_resource_tradable = min(
             max_trade_amount, trader.stocks[trade_resource_index]
         )
-        if max_resource_tradable * price > bidder.stocks[trade_exchange_resource_index]:
+        if max_resource_tradable * price > asker.stocks[trade_exchange_resource_index]:
             max_resource_tradable = int(
-                bidder.stocks[trade_exchange_resource_index] / price
+                asker.stocks[trade_exchange_resource_index] / price
             )
 
         trader.stocks[trade_resource_index] -= max_resource_tradable
-        bidder.stocks[trade_resource_index] += max_resource_tradable
+        asker.stocks[trade_resource_index] += max_resource_tradable
 
         trader.stocks[trade_exchange_resource_index] += int(
             max_resource_tradable * price
         )
-        bidder.stocks[trade_exchange_resource_index] -= int(
+        asker.stocks[trade_exchange_resource_index] -= int(
             max_resource_tradable * price
         )
+
+        if (
+            trader.stocks[trade_resource_index] < 0
+            or trader.stocks[trade_exchange_resource_index] < 0
+            or asker.stocks[trade_resource_index] < 0
+            or asker.stocks[trade_exchange_resource_index] < 0
+        ):
+            breakpoint()
 
         return True
 
@@ -576,7 +615,8 @@ class GameSession:
                 nation.fertility,
             ]
 
-        assert sum(weights) < 1.0, "Weights are too high"
+        # Some leeway for rounding effects on sum.
+        assert sum(weights) <= 1.01, "Weights are too high"
         for weight in weights:
             assert weight >= 0, "Weights must be non-negative"
 
@@ -589,7 +629,7 @@ class GameSession:
         harvesting = non_procreative_harvesting + [procreative_harvesting]
 
         amount_harvested = [
-            harvesting_population * nation.efficiency
+            int(harvesting_population * nation.efficiency)
             for harvesting_population in harvesting
         ]
         for i, amount in enumerate(amount_harvested):
@@ -614,27 +654,35 @@ class GameSession:
             nation.stocks[3] -= population_increase
             nation.population += population_increase
 
-    def print_status(self):
-        print(f"Tick: {self.tick}")
+    def print_status(self, show_asks: bool = False) -> None:
+        print(f"Tick: {self.last_tick}")
         for i, nation in enumerate(self.nations):
             print(f"Nation {i}:")
+            print(
+                f"Mentality: builder={nation.builder}, hoarder={nation.hoarder}, trader={nation.trader}"
+            )
+            print(
+                f"Parameters: aggression={nation.aggression}, caution={nation.caution}, efficiency={nation.efficiency}, fertility={nation.fertility}"
+            )
             print(f"\tPopulation: {nation.population}")
             print(f"\tTechnology: {nation.technology}")
             print(f"\tStocks: {json.dumps(nation.stocks)}")
-            print("\tBids:")
-            for i in range(4):
-                print(f"\t\tResource {i}: {json.dumps(nation.bids[i])}")
+            if show_asks:
+                print("\tAsks:")
+                for i in range(4):
+                    print(f"\t\tResource {i}: {nation.asks[i]}")
 
     def tick(self, shuffle_nations: bool = True, output: bool = True) -> None:
         """
         Simulates one tick of the game.
         """
-        self.tick += 1
+        eliminated = 0
+        self.last_tick += 1
 
         if output:
             self.print_status()
 
-        if self.tick % self.population_growth_interval == 0:
+        if self.last_tick % self.population_growth_interval == 0:
             self.increase_populations()
 
         national_indices = list(range(len(self.nations)))
@@ -642,6 +690,10 @@ class GameSession:
             random.shuffle(national_indices)
 
         for nation_index in national_indices:
+            if self.nations[nation_index].population == 0:
+                eliminated += 1
+                continue
+
             target = self.should_attack(nation_index)
             if target is not None:
                 result = self.attack(nation_index, target)
@@ -653,18 +705,31 @@ class GameSession:
                 continue
 
             # 0 for improve_efficiency, 1 for harvest, 2 for trade
-            economic_action = random.randint(0, 2)
+            choice = random.random()
+            mentality_cdf = [
+                self.nations[nation_index].builder,
+                self.nations[nation_index].builder + self.nations[nation_index].hoarder,
+                1,
+            ]
+
+            if choice <= mentality_cdf[0]:
+                economic_action = 0
+            elif choice <= mentality_cdf[1]:
+                economic_action = 1
+            else:
+                economic_action = 2
+
             harvesting_weights: Optional[List[float]] = None
 
             # But only if we shouldn't be defending
             threat = self.should_defend(nation_index)
             if threat is not None:
-                harvesting_weights = [0.0, 1.0, 0.0, 0.0]
+                harvesting_weights = [0.0, 0.5, 0.0, 0.5]
 
                 # Zero out all bids that use up defensive resources
                 for i in range(4):
-                    self.nations[nation_index].bids[1][i] = 0.0
-                economic_action = 1
+                    self.nations[nation_index].asks[1][i] = 0.0
+                economic_action = 2
 
             if economic_action == 0:
                 result = self.increase_efficiency(nation_index)
@@ -681,6 +746,9 @@ class GameSession:
 
         if output:
             self.print_status()
+
+        if eliminated == len(self.nations):
+            raise Exception("All nations have been eliminated")
 
         self.update()
 
